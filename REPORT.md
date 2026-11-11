@@ -201,9 +201,106 @@ the last read keeps P(at #1) = 0.303 and top-10 mass 0.378, matching the
   practice history carries no `details`, so no real game was ever observed
   aging out in the tuning data.
 
+---
+
+# v2 (2026-11-12) — what changed and why
+
+## Diagnosis of v1's −35.8
+
+The practice window's true answer was reconstructed locally from the
+public archive (10 reads, 2026-11-08 → 2026-11-10; the local scorer
+reproduces the house baseline's stated practice score −43.512039
+exactly, and the shipped v1 at −35.745 vs the official −35.8). Per-place
+losses concentrate at places 1–2 (mean ln p −4.85 / −5.05): the games
+that actually held #1/#2 — Sweep The Moon 🌕 (2× #1, 2× #2), Do Not
+Stop. (3× #1, brand-new, never in the history) and Bloody Ragdoll
+Physics (2× #2, brand-new) — were mostly UNNAMED, scoring only the
+~0.001 residual share. Sweep was rank 29 at the cutoff, climbing from
+98 over four days, but its last-48 h rank drift was flat-to-negative, so
+the diffusion gave it P(#1) ≈ 0. The #1 spot rotates among ~5 games;
+the model's 0.56 on the incumbent (Survive Your Ideas, #1 in 0 of the
+10 window reads) was overconfident.
+
+## New signal: 48 h playing growth
+
+For mid-chart games (rank 11–40), 48 h log-playing growth predicts
+climbing: growth ≥ 1.0 (2.7×) → P(top 10 in 72 h) = 21.3%, P(top 3) =
+9.4%, vs a 4.5% / 1.4% base rate (n = 1,317 game-windows, whole
+archive). The earlier "playing growth has no signal" check (corr 0.017)
+was over all games and consecutive reads and missed this tail effect.
+v2 adds a drift boost, min(0.040, 0.024 × max(0, growth − 0.5)) per
+hour, for every rank. With it, Sweep The Moon gets P(#1) = 0.015,
+P(#2) = 0.033, P(#3) = 0.041 (v1: all 0).
+
+## Other v2 changes (each validated separately)
+
+- **Student-t(3) hourly steps** instead of Gaussian, same per-hour sd:
+  heavy tails let climbers jump. Alone: practice −35.28, backtest
+  −35.17.
+- **Score cap at 0.0**: a latent score cannot sit above the #1 score,
+  so the incumbent cannot run away. Alone: practice −34.91, backtest
+  −34.90. **And a tie-break fix that turned out to matter as much as
+  the cap itself**: the cap pins several games at exactly 0.0, and
+  `heapq.nlargest` breaks exact ties by game index, crediting the
+  incumbent #1 with every tie (Survive P(#1) 0.395 vs 0.318). A tiny
+  per-replicate deterministic jitter (1e-9, own seeded stream) splits
+  tied places fairly; without it the practice score is ~0.35 worse.
+  The numpy prototype's `argpartition` broke ties effectively at
+  random, which is why the port initially scored 0.3 below the
+  prototype — diagnosed and fixed, not tuned away.
+- **Top-3 drift zeroing**: games already in the top 3 get no upward
+  rank drift (they cannot climb further). Alone: practice −35.58,
+  backtest −34.91.
+- **Rejected after measurement** (each worse on the practice window
+  and/or the backtests): temperature flattening (0.6–0.8), lowering
+  P_MIN to 0.001–0.002, place-sum caps, longer drift windows (120 h),
+  larger σ (0.28), σ × 1.0 for the top, OU mean reversion (θ 0.005–
+  0.02), per-game σ, drift shrink 0.3 / cap 0.01. The baseline config
+  was already well tuned; only the three changes above plus the
+  playing-growth boost survived.
+
+## Validation (all with the competition's own log-score rule)
+
+MC noise gauged first: the baseline config over 3 seeds varies
+±0.07 (practice) / ±0.03 (backtest mean), so a gain must clear that
+to count. Three evaluations, all measured with the same scorer:
+
+| evaluation | v1 (current entry) | v2 | gain |
+|---|---:|---:|---:|
+| practice window, 10 reads (official dev metric; local replica of the shipped v1 = −35.745 vs official −35.8) | −35.84 | **−32.10** | **+3.74** |
+| rolling-origin backtests, 19 cutoffs | −35.13 | **−34.15** | **+0.98** |
+| recent-regime backtests, 13 cutoffs Nov 7–10 (archive reads to Nov 11) | −33.65 | **−33.18** | **+0.47** |
+
+The shipped `main.py` (pure Python, 2,000 replicates) reproduces the
+numpy prototype on the practice window (−32.099 vs −32.120) and at
+three rolling-origin cutoffs (−36.47 vs −36.38; −29.45 vs −29.25;
+−26.89 vs −26.65). Two runs are byte-identical (determinism check),
+format verified (200 rows, place sums ≤ 1, top 10 distinct, 10,298
+bytes), runtime ~48 s per run (limit 300 s), 28-day expiry unit test
+re-run and passing on v2.
+
+## What v2 does NOT claim
+
+- The practice gain (+3.7) is much larger than the backtest gains
+  (+0.98 / +0.47): the practice window happened to feature exactly
+  the playing-surge climbers the boost targets. The final window
+  (Nov 13–16) will be graded on unseen charts; the backtest gains are
+  the honest expectation, and they are positive on all 32 windows
+  tested. Per-cutoff backtest scores range −40.5 to −24.0; a hard
+  final window is still possible.
+- ~30% of the practice window's #1 reads were a brand-new game (Do
+  Not Stop.) that no history-based forecast can name; those stay on
+  the unnamed residual.
+- The final run's history adds ~48 hourly house-recorder reads the
+  tuning never saw (dense instead of sparse). The model is
+  time-based (hourly σ, 48 h drift/growth windows), so it should
+  transfer, but it was never tested on hourly-spaced data.
+
 ## What was NOT done (per the task)
 
-- No GitHub repo created, nothing submitted, no wallets/keypairs created,
-  no private keys or API keys handled. No live browser work was needed.
-  The entry is `main.py` + `LICENSE` + this `REPORT.md`, ready to be copied
-  into the `kadocay/roblox-forecast` repository by the parent agent.
+- No wallets/keypairs created, no private keys or API keys handled. No
+  live browser work was needed. The v2 entry is `main.py` + `LICENSE` +
+  this `REPORT.md`, submitted as round 2 to the `kadocay/roblox-forecast`
+  repository by the builder subagent (see the submission id in the
+  coordinator's report); transcripts of the sessions that built it were
+  bundled with the submission.
